@@ -2,23 +2,30 @@ name = "forex-analyst-bot"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
+# Always enable logs
+[logs]
+enabled = true
+
+# Compatibility flags
+compatibility_flags = ["global_fetch_strictly_public"]
+
 [vars]
-# Add your environment variables here if needed, but better to use secrets
+# Required environment variables (set via wrangler secret put)
+# LINE_CHANNEL_SECRET - LINE Bot channel secret for signature verification
+# LINE_CHANNEL_ACCESS_TOKEN - LINE Bot channel access token for sending messages
+# GEMINI_API_KEY - Google Gemini API key for AI analysis
+# MODEL_ID - Gemini model to use (required, e.g., gemini-2.0-flash, gemini-1.5-pro)
+
+# Optional variables (customize as needed)
+# INTERNAL_TASK_TOKEN - Shared secret for internal task validation (optional)
+# FAST_ANALYSIS_DEADLINE_MS - Fast-path analysis timeout in milliseconds (optional, default: ~5000)
+# AI_MAX_OUTPUT_TOKENS - Maximum output tokens for AI responses (optional, default: 1200-1600)
+# INTERNAL_AI_TIMEOUT_MS - AI analysis timeout for internal tasks (optional, default: 120000)
+# INTERNAL_MAX_RETRY - Max retries for internal analysis (optional, default: 1)
+# EST_SECONDS_PER_IMAGE - Estimated seconds per image for queue ETA (optional, default: 30)
 
 # For D1 database
 [[d1_databases]]
 binding = "DB"
 database_name = "forexanalyze"
 database_id = "9412eca8-24a4-4281-a518-63ecd08bcc8a"  # Fill in your D1 database ID
-
-# For secrets, use wrangler secret put
-# LINE_CHANNEL_SECRET
-# LINE_CHANNEL_ACCESS_TOKEN
-# GEMINI_API_KEY
-# MODEL_ID (optional)
-# INTERNAL_TASK_TOKEN (optional)
-# FAST_ANALYSIS_DEADLINE_MS (optional)
-# AI_MAX_OUTPUT_TOKENS (optional)
-# INTERNAL_AI_TIMEOUT_MS (optional)
-# INTERNAL_MAX_RETRY (optional)
-# EST_SECONDS_PER_IMAGE (optional)
