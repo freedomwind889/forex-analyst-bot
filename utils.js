@@ -18,7 +18,10 @@ export async function verifyLineSignature(body, signature, secret) {
 
 export function getModelId(env) {
   // Normalize Model ID: remove 'models/' prefix if present
-  const rawId = env.MODEL_ID || 'gemma-3-27b-it';
+  const rawId = env.MODEL_ID;
+  if (!rawId) {
+    throw new Error('MODEL_ID environment variable is required. Set it to a valid Gemini model (e.g., gemini-2.0-flash, gemini-1.5-pro)');
+  }
   return rawId.replace(/^models\//, '');
 }
 

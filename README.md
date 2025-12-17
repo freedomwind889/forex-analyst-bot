@@ -36,8 +36,7 @@ A Cloudflare Worker-based LINE Bot for multi-timeframe technical analysis of for
    wrangler secret put LINE_CHANNEL_SECRET
    wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
    wrangler secret put GEMINI_API_KEY
-   # Optional:
-   wrangler secret put MODEL_ID  # Default: gemma-3-27b-it
+   wrangler secret put MODEL_ID  # Required: e.g., gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash
    wrangler secret put INTERNAL_TASK_TOKEN
    ```
 
