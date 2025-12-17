@@ -1,4 +1,4 @@
-import { normalizeTF, safeError, inferLikelyCurrentTF, arrayBufferToBase64, promiseWithTimeout } from './utils.js';
+import { normalizeTF, safeError, inferLikelyCurrentTF, arrayBufferToBase64, promiseWithTimeout, safeParseJsonLoosely } from './utils.js';
 import { TF_VALIDITY_MS, TF_ORDER, CANCEL_TEXT, MAIN_MENU_TEXT } from './config.js';
 import { mainMenu, tradeStyleMenu } from './menus.js';
 import { replyText, getContentFromLine } from './line.js';
@@ -141,6 +141,17 @@ export async function handleEvent(event, env, ctx, requestUrl) {
 
       // Enqueue this image for FIFO processing (allows users to send multiple images continuously)
       const { jobId, createdAt } = await enqueueAnalysisJob(userId, messageId, env);
+
+      // Cache image in KV for timeout recovery & retry capability
+      ctx.waitUntil((async () => {
+        try {
+          const { arrayBuffer: imageBinary, contentType } = await getContentFromLine(messageId, env);
+          const base64Image = arrayBufferToBase64(imageBinary);
+          await saveImageToKV(env.ANALYSIS_KV, userId, jobId, base64Image, contentType, 0);
+        } catch (err) {
+          console.warn(`Failed to cache image to KV for job ${jobId}:`, safeError(err));
+        }
+      })());
 
       const ackMsg = await buildQueueAckMessage(userId, jobId, createdAt, env);
 
@@ -586,19 +597,64 @@ export async function handleInternalAnalyze(request, env, ctx) {
           internalTimeoutMs
         );
       } catch (err) {
-        // Handle timeout gracefully with fallback (don't retry, save fallback result)
+        // Handle timeout gracefully with smart recovery
         const msg = String(err?.message || err);
         const isTimeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
         
-        // For TIMEOUT: Use fallback analysis to avoid losing user's image submission
+        // For TIMEOUT: Try to recover by analyzing from cached KV image + retry one more time
         if (isTimeout) {
-          console.warn('AI analysis timeout, using fallback for immediate response:', msg);
-          // Try to preserve data from most recent analysis
-          const recentAnalysis = existingRows?.[0];
-          const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
-          analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
-          // Mark as timeout but continue (don't return/retry)
-          if (analysisResult) {
+          console.warn('AI analysis timeout, attempting recovery from KV cache:', msg);
+          const attempt_recovery = Number(job.attempt || 0) + 1;
+          const maxRecoveryAttempts = 2;
+          
+          // If we haven't exceeded max recovery attempts, try one retry from KV
+          if (attempt_recovery <= maxRecoveryAttempts) {
+            console.log(`[Timeout Recovery] Attempt ${attempt_recovery}/${maxRecoveryAttempts} - Fetching from KV and retrying`);
+            try {
+              const cachedImg = await getImageFromKV(env.ANALYSIS_KV, userId, job.job_id);
+              if (cachedImg && cachedImg.base64) {
+                // Retry analysis with shorter timeout
+                const recoveryTimeoutMs = Math.max(5000, internalTimeoutMs / 2);
+                const recoveryController = new AbortController();
+                try {
+                  analysisResult = await promiseWithTimeout(
+                    analyzeChartStructured(userId, cachedImg.base64, existingRows, env, { mimeType: cachedImg.contentType, signal: recoveryController.signal }),
+                    recoveryTimeoutMs
+                  );
+                  console.log('[Timeout Recovery] Success! Analysis completed on recovery attempt');
+                  analysisResult._recovery_attempt = attempt_recovery;
+                } catch (recoveryErr) {
+                  // Recovery also failed, fall back to previous analysis
+                  console.warn('[Timeout Recovery] Recovery attempt also timed out, using cached analysis');
+                  const recentAnalysis = existingRows?.[0];
+                  const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+                  analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
+                  analysisResult._analysis_timeout = true;
+                  analysisResult._recovery_failed = true;
+                } finally {
+                  try { recoveryController.abort(); } catch (_) {}
+                }
+              } else {
+                // No KV cache available, use immediate fallback
+                console.warn('[Timeout Recovery] No cached image in KV, using fallback analysis');
+                const recentAnalysis = existingRows?.[0];
+                const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+                analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
+                analysisResult._analysis_timeout = true;
+              }
+            } catch (kvErr) {
+              console.error('[Timeout Recovery] KV fetch failed:', safeError(kvErr));
+              const recentAnalysis = existingRows?.[0];
+              const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+              analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
+              analysisResult._analysis_timeout = true;
+            }
+          } else {
+            // Exceeded max recovery attempts, give up and use fallback
+            console.log('[Timeout Recovery] Max recovery attempts exceeded, using fallback');
+            const recentAnalysis = existingRows?.[0];
+            const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+            analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
             analysisResult._analysis_timeout = true;
           }
         } else {
@@ -698,6 +754,9 @@ export async function handleInternalAnalyze(request, env, ctx) {
         doneAt,
         doneReadable
       }, env);
+
+      // Clean up cached image and state from KV (analysis is complete)
+      await cleanupAnalysisFromKV(env.ANALYSIS_KV, userId, job.job_id);
 
       // If more jobs queued, continue chain
       if (stats.queued_count > 0) {
