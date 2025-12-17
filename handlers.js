@@ -4,7 +4,7 @@ import { mainMenu, tradeStyleMenu } from './menus.js';
 import { replyText, getContentFromLine } from './line.js';
 import { analyzeChartStructured, chatWithGeminiText, analyzeTradeStyleWithGemini, reanalyzeFromDB } from './ai.js';
 import { getAllAnalyses, saveAnalysis, deleteAnalysis, updateAnalysisTF } from './database.js';
-import { enqueueAnalysisJob, buildQueueAckMessage, claimNextQueuedJob, requeueJob, markJobDone, markJobError, hasQueuedJobs } from './queue.js';
+import { enqueueAnalysisJob, buildQueueAckMessage, claimNextQueuedJob, requeueJob, markJobDone, markJobError, hasQueuedJobs, getUserQueueStats } from './queue.js';
 
 // --- EVENT HANDLER ---
 export async function handleEvent(event, env, ctx, requestUrl) {

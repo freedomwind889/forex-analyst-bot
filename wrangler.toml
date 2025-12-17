@@ -18,7 +18,7 @@ persist = true
 head_sampling_rate = 1
 
 # Compatibility flags
-compatibility_flags = ["global_fetch_strictly_public"]
+compatibility_flags = ["global_fetch_strictly_public", "nodejs_compat"]
 
 [vars]
 # Required environment variables (set via wrangler secret put)
