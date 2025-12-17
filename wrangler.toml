@@ -2,9 +2,20 @@ name = "forex-analyst-bot"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
-# Always enable logs
-[logs]
+[observability]
 enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
 
 # Compatibility flags
 compatibility_flags = ["global_fetch_strictly_public"]
