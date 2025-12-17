@@ -1,4 +1,4 @@
-import { normalizeTF, safeError, inferLikelyCurrentTF, arrayBufferToBase64 } from './utils.js';
+import { normalizeTF, safeError, inferLikelyCurrentTF, arrayBufferToBase64, promiseWithTimeout } from './utils.js';
 import { TF_VALIDITY_MS, CANCEL_TEXT, MAIN_MENU_TEXT } from './config.js';
 import { mainMenu, tradeStyleMenu } from './menus.js';
 import { replyText, getContentFromLine } from './line.js';
