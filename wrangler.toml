@@ -1,0 +1,24 @@
+name = "forex-analyst-bot"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+# Add your environment variables here if needed, but better to use secrets
+
+# For D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "forex_analysis_db"
+database_id = ""  # Fill in your D1 database ID
+
+# For secrets, use wrangler secret put
+# LINE_CHANNEL_SECRET
+# LINE_CHANNEL_ACCESS_TOKEN
+# GEMINI_API_KEY
+# MODEL_ID (optional)
+# INTERNAL_TASK_TOKEN (optional)
+# FAST_ANALYSIS_DEADLINE_MS (optional)
+# AI_MAX_OUTPUT_TOKENS (optional)
+# INTERNAL_AI_TIMEOUT_MS (optional)
+# INTERNAL_MAX_RETRY (optional)
+# EST_SECONDS_PER_IMAGE (optional)
