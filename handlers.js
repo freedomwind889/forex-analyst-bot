@@ -339,7 +339,11 @@ function formatAnalysisSummary(data, row) {
   const trigger = data?.trigger || data?.detailed_technical_data?.trigger || {};
   const action = (setup?.action || 'WAIT').toUpperCase();
   const confidence = setup?.confidence || 'Medium';
-  const tfs = (data?.tfs_used_for_confluence || []).join(', ') || 'Unknown';
+  
+  // Only show TFs that were actually used for confluence (not requested ones)
+  const actualTFs = (data?.tfs_used_for_confluence || []).filter(t => t && !String(t).startsWith('_'));
+  const tfs = actualTFs.length > 0 ? actualTFs.join(', ') : '-';
+  
   const entry = setup?.entry_zone || '-';
   const tp = setup?.target_price || '-';
   const sl = setup?.stop_loss || '-';
@@ -352,21 +356,26 @@ function formatAnalysisSummary(data, row) {
   
   // Use the same format as image analysis response
   let lines = [];
-  lines.push(`📢 **สถานะ: ${action} (${confidence})**`);
-  lines.push(`⏱️ **TF ปัจจุบัน:** ${tf}`);
-  lines.push(`📚 **ข้อมูลประกอบ (Confluence):** ${tfs}`);
+  lines.push(`📢 สถานะ: ${action} (${confidence})`);
+  lines.push(`⏱️ TF ปัจจุบัน: ${tf}`);
+  
+  // Show confluence only if there are actual TFs used
+  if (tfs !== '-') {
+    lines.push(`📚 ข้อมูลประกอบ (Confluence): ${tfs}`);
+  }
+  
   lines.push('');
-  lines.push(`🔍 **Top-Down Analysis:**`);
-  lines.push(`1️⃣ **Structure:** ${structureText}`);
-  lines.push(`2️⃣ **Area of Value:** ${valueText}`);
-  lines.push(`3️⃣ **Entry Trigger:** ${triggerText}`);
+  lines.push(`🔍 Top-Down Analysis:`);
+  lines.push(`1️⃣ Structure: ${structureText}`);
+  lines.push(`2️⃣ Area of Value: ${valueText}`);
+  lines.push(`3️⃣ Entry Trigger: ${triggerText}`);
   lines.push('');
-  lines.push(`🎯 **Setup:**`);
-  lines.push(`- **Entry:** ${entry}`);
-  lines.push(`- **TP:** ${tp}`);
-  lines.push(`- **SL:** ${sl}`);
+  lines.push(`🎯 Setup:`);
+  lines.push(`- Entry: ${entry}`);
+  lines.push(`- TP: ${tp}`);
+  lines.push(`- SL: ${sl}`);
   lines.push('');
-  lines.push(`💡 **สรุป:** ${summary}`);
+  lines.push(`💡 สรุป: ${summary}`);
 
   return lines.join('\n');
 }
@@ -572,29 +581,39 @@ export async function handleInternalAnalyze(request, env, ctx) {
     console.error("Failed to write _JOB marker:", safeError(e));
   }
 
-  ctx.waitUntil((async () => {
+  // ✅ Return immediately - do NOT use ctx.waitUntil() to wrap entire analysis
+  // Instead: kick off background task via separate internal call
+  performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, request.url)
+    .catch(e => console.error("Background analysis failed:", safeError(e)));
+
+  return new Response('ACCEPTED', { status: 202 });
+}
+
+// ✅ NEW: Separate function for background analysis (not wrapped in ctx.waitUntil)
+async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, requestUrl) {
+  const attempt = Number(job.attempt || 0);
+
+  try {
+    const { arrayBuffer: imageBinary, contentType } = await getContentFromLine(job.message_id, env);
+    const base64Image = arrayBufferToBase64(imageBinary);
+
+    // Cache image in KV for timeout recovery & retry capability
     try {
-      const { arrayBuffer: imageBinary, contentType } = await getContentFromLine(job.message_id, env);
-      const base64Image = arrayBufferToBase64(imageBinary);
+      await saveImageToKV(env.ANALYSIS_KV, userId, job.job_id, base64Image, contentType, 0);
+    } catch (kvErr) {
+      console.warn(`[Job ${job.job_id}] Failed to cache image to KV:`, safeError(kvErr));
+    }
 
-      // Cache image in KV for timeout recovery & retry capability (done here with ample background time)
-      try {
-        await saveImageToKV(env.ANALYSIS_KV, userId, job.job_id, base64Image, contentType, 0);
-      } catch (kvErr) {
-        console.warn(`[Job ${job.job_id}] Failed to cache image to KV:`, safeError(kvErr));
-        // Continue anyway - KV is optional for recovery, not critical
-      }
+    const existingRows = (await getAllAnalyses(userId, env)).filter(r => !String(r.tf || '').startsWith('_'));
+    const controller = new AbortController();
 
-      const existingRows = (await getAllAnalyses(userId, env)).filter(r => !String(r.tf || '').startsWith('_'));
-      const controller = new AbortController();
-
-      let analysisResult;
-      try {
-        analysisResult = await promiseWithTimeout(
-          analyzeChartStructured(userId, base64Image, existingRows, env, { mimeType: contentType, signal: controller.signal }),
-          internalTimeoutMs
-        );
-      } catch (err) {
+    let analysisResult;
+    try {
+      analysisResult = await promiseWithTimeout(
+        analyzeChartStructured(userId, base64Image, existingRows, env, { mimeType: contentType, signal: controller.signal }),
+        internalTimeoutMs
+      );
+    } catch (err) {
         // Handle timeout gracefully with smart recovery
         const msg = String(err?.message || err);
         const isTimeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
@@ -758,10 +777,10 @@ export async function handleInternalAnalyze(request, env, ctx) {
 
       // If more jobs queued, continue chain
       if (stats.queued_count > 0) {
-        await triggerInternalAnalyze(userId, request.url, env);
+        await triggerInternalAnalyze(userId, requestUrl, env);
       }
     } catch (e) {
-      console.error("Internal analyze failed:", safeError(e));
+      console.error("Background analysis failed:", safeError(e));
       try {
         await markJobError(job.job_id, env, String(e?.message || e));
         const errAt = Date.now();
@@ -776,13 +795,10 @@ export async function handleInternalAnalyze(request, env, ctx) {
         }, env);
 
         if (await hasQueuedJobs(userId, env)) {
-          await triggerInternalAnalyze(userId, request.url, env);
+          await triggerInternalAnalyze(userId, requestUrl, env);
         }
       } catch (e2) {
         console.error("Failed to update _JOB marker (error):", safeError(e2));
       }
     }
-  })());
-
-  return new Response('ACCEPTED', { status: 202 });
 }

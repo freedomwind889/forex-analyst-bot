@@ -19,7 +19,7 @@ export function createFallbackAnalysis(userId, detectedTf, existingContext = nul
         trigger: existingData?.trigger || { candlestick_patterns: [], divergence: 'unknown' },
         trade_setup: existingData?.trade_setup || { action: 'WAIT', confidence: 'Low', risk_flags: [] }
       },
-      user_response_text: `⏳ **สถานะ: WAIT (Low)**\n⏱️ **TF ปัจจุบัน:** ${detectedTf || 'Unknown'}\n\n📌 **ข้อมูลจากการวิเคราะห์ครั้งก่อน**\nกำลังประมวลผล... กรุณารอสักครู่`
+      user_response_text: `⏳ สถานะ: WAIT (Low)\n⏱️ TF ปัจจุบัน: ${detectedTf || 'Unknown'}\n\n📌 ข้อมูลจากการวิเคราะห์ครั้งก่อน\nกำลังประมวลผล... กรุณารอสักครู่`
     };
   }
   
@@ -36,7 +36,7 @@ export function createFallbackAnalysis(userId, detectedTf, existingContext = nul
       trigger: { candlestick_patterns: [], divergence: 'unknown' },
       trade_setup: { action: 'WAIT', confidence: 'Low', risk_flags: ['Timeout - Incomplete Analysis'] }
     },
-    user_response_text: '⚠️ **สถานะ: WAIT (Low)**\n⏱️ **TF ปัจจุบัน:** ' + (detectedTf || 'Unknown') + '\n\n⚠️ การวิเคราะห์ใช้เวลานาน กรุณาส่งรูปกราฟใหม่เพื่อให้ได้ผลลัพธ์ที่ถูกต้อง'
+    user_response_text: '⚠️ สถานะ: WAIT (Low)\n⏱️ TF ปัจจุบัน: ' + (detectedTf || 'Unknown') + '\n\n⚠️ การวิเคราะห์ใช้เวลานาน กรุณาส่งรูปกราฟใหม่เพื่อให้ได้ผลลัพธ์ที่ถูกต้อง'
   };
 }
 
