@@ -2,6 +2,25 @@ import { getModelId, safeParseJsonLoosely, promiseWithTimeout, normalizeTF, sele
 import { TF_VALIDITY_MS, TF_ORDER } from './config.js';
 import { getAllAnalyses, saveAnalysis } from './database.js';
 
+// --- FAST FALLBACK for Timeout (Free-tier 30s limit protection) ---
+export function createFallbackAnalysis(userId, detectedTf) {
+  // Graceful degradation when AI times out - return basic structure with WAIT action
+  return {
+    detected_tf: detectedTf || 'Unknown',
+    tfs_used_for_confluence: [],
+    request_update_for_tf: null,
+    reasoning_trace: ['Timeout: Using cached/fallback analysis. Please re-upload for full analysis.'],
+    detailed_technical_data: {
+      trend_bias: 'Unknown',
+      structure: { parent_bias: 'Unknown', market_structure: 'Unknown' },
+      value: { at_key_level: false, key_levels_summary: 'Pending full analysis' },
+      trigger: { candlestick_patterns: [], divergence: 'unknown' },
+      trade_setup: { action: 'WAIT', confidence: 'Low', risk_flags: ['Timeout - Incomplete Analysis'] }
+    },
+    user_response_text: '⚠️ **สถานะ: WAIT (Low)**\n⏱️ **TF ปัจจุบัน:** ' + (detectedTf || 'Unknown') + '\n\n⚠️ การวิเคราะห์ใช้เวลานาน กรุณาส่งรูปกราฟใหม่เพื่อให้ได้ผลลัพธ์ที่ถูกต้อง'
+  };
+}
+
 // --- CORE ANALYSIS (UPDATED FOR TOP-DOWN) ---
 
 export async function analyzeChartStructured(userId, base64Image, existingRows, env, options = {}) {

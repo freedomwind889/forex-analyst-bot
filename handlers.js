@@ -2,7 +2,7 @@ import { normalizeTF, safeError, inferLikelyCurrentTF, arrayBufferToBase64, prom
 import { TF_VALIDITY_MS, CANCEL_TEXT, MAIN_MENU_TEXT } from './config.js';
 import { mainMenu, tradeStyleMenu } from './menus.js';
 import { replyText, getContentFromLine } from './line.js';
-import { analyzeChartStructured, chatWithGeminiText, analyzeTradeStyleWithGemini, reanalyzeFromDB } from './ai.js';
+import { analyzeChartStructured, chatWithGeminiText, analyzeTradeStyleWithGemini, reanalyzeFromDB, createFallbackAnalysis } from './ai.js';
 import { getAllAnalyses, saveAnalysis, deleteAnalysis, updateAnalysisTF } from './database.js';
 import { enqueueAnalysisJob, buildQueueAckMessage, claimNextQueuedJob, requeueJob, markJobDone, markJobError, hasQueuedJobs, getUserQueueStats } from './queue.js';
 
@@ -510,7 +510,7 @@ export async function handleInternalAnalyze(request, env, ctx) {
     return new Response('OK', { status: 200 });
   }
 
-  const internalTimeoutMs = Math.max(8000, Number(env.INTERNAL_AI_TIMEOUT_MS || 24000));
+  const internalTimeoutMs = Math.max(8000, Number(env.INTERNAL_AI_TIMEOUT_MS || 28000));
   const maxAttempts = Math.max(1, Number(env.INTERNAL_MAX_RETRY || 3));
   const attempt = Number(job.attempt || 0);
 
@@ -549,53 +549,64 @@ export async function handleInternalAnalyze(request, env, ctx) {
           internalTimeoutMs
         );
       } catch (err) {
-        // retryable?
+        // Handle timeout gracefully with fallback (don't retry, save fallback result)
         const msg = String(err?.message || err);
-        const retryable =
-          (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) ||
-          msg.includes('429') || msg.includes('503') || msg.includes('500');
+        const isTimeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+        
+        // For TIMEOUT: Use fallback analysis to avoid losing user's image submission
+        if (isTimeout) {
+          console.warn('AI analysis timeout, using fallback for immediate response:', msg);
+          analysisResult = createFallbackAnalysis(userId, 'Unknown');
+          // Mark as timeout but continue (don't return/retry)
+          if (analysisResult) {
+            analysisResult._analysis_timeout = true;
+          }
+        } else {
+          // For other errors: retry if retryable
+          const retryable = msg.includes('429') || msg.includes('503') || msg.includes('500');
+          const nextAttempt = attempt + 1;
+          
+          if (retryable && nextAttempt <= maxAttempts) {
+            await requeueJob(job.job_id, env, nextAttempt, msg);
 
-        const nextAttempt = attempt + 1;
-        if (retryable && nextAttempt <= maxAttempts) {
-          await requeueJob(job.job_id, env, nextAttempt, msg);
+            const retryAt = Date.now();
+            const retryReadable = new Date(retryAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+            await saveAnalysis(userId, '_JOB', retryAt, retryReadable, {
+              status: 'retrying',
+              jobId: job.job_id,
+              messageId: job.message_id,
+              attempt: nextAttempt,
+              maxAttempts,
+              lastError: msg,
+              retryAt,
+              retryReadable
+            }, env);
 
-          const retryAt = Date.now();
-          const retryReadable = new Date(retryAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
-          await saveAnalysis(userId, '_JOB', retryAt, retryReadable, {
-            status: 'retrying',
+            await triggerInternalAnalyze(userId, request.url, env);
+            return;
+          }
+
+          // non-retryable / exceeded attempts
+          await markJobError(job.job_id, env, msg);
+          const errAt = Date.now();
+          const errReadable = new Date(errAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+          await saveAnalysis(userId, '_JOB', errAt, errReadable, {
+            status: 'error',
             jobId: job.job_id,
             messageId: job.message_id,
             attempt: nextAttempt,
             maxAttempts,
-            lastError: msg,
-            retryAt,
-            retryReadable
+            error: msg,
+            errAt,
+            errReadable
           }, env);
 
-          await triggerInternalAnalyze(userId, request.url, env);
+          // continue to next queued job if any
+          if (await hasQueuedJobs(userId, env)) {
+            await triggerInternalAnalyze(userId, request.url, env);
+          }
           return;
         }
-
-        // non-retryable / exceeded attempts
-        await markJobError(job.job_id, env, msg);
-        const errAt = Date.now();
-        const errReadable = new Date(errAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
-        await saveAnalysis(userId, '_JOB', errAt, errReadable, {
-          status: 'error',
-          jobId: job.job_id,
-          messageId: job.message_id,
-          attempt: nextAttempt,
-          maxAttempts,
-          error: msg,
-          errAt,
-          errReadable
-        }, env);
-
-        // continue to next queued job if any
-        if (await hasQueuedJobs(userId, env)) {
-          await triggerInternalAnalyze(userId, request.url, env);
-        }
-        return;
       } finally {
         try { controller.abort(); } catch (_) {}
       }

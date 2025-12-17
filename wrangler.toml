@@ -31,7 +31,7 @@ compatibility_flags = ["global_fetch_strictly_public", "nodejs_compat"]
 # INTERNAL_TASK_TOKEN - Shared secret for internal task validation (optional)
 # FAST_ANALYSIS_DEADLINE_MS - Fast-path analysis timeout in milliseconds (optional, default: ~5000)
 # AI_MAX_OUTPUT_TOKENS - Maximum output tokens for AI responses (optional, default: 1200-1600)
-# INTERNAL_AI_TIMEOUT_MS - AI analysis timeout for internal tasks (optional, default: 120000)
+# INTERNAL_AI_TIMEOUT_MS - AI analysis timeout for internal tasks (optional, default: 28000 = 28s, max 30s free-tier limit)
 # INTERNAL_MAX_RETRY - Max retries for internal analysis (optional, default: 1)
 # EST_SECONDS_PER_IMAGE - Estimated seconds per image for queue ETA (optional, default: 30)
 
