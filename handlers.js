@@ -581,11 +581,13 @@ export async function handleInternalAnalyze(request, env, ctx) {
     console.error("Failed to write _JOB marker:", safeError(e));
   }
 
-  // ✅ Return immediately - do NOT use ctx.waitUntil() to wrap entire analysis
-  // Instead: kick off background task via separate internal call
+  // ✅ CRITICAL: Wrap background analysis in ctx.waitUntil() to prevent premature worker termination
+  // Cloudflare Workers will kill async operations when response is sent unless wrapped in ctx.waitUntil()
   const requestUrl = request.url;
-  performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, requestUrl)
-    .catch(e => console.error("Background analysis failed:", safeError(e)));
+  ctx.waitUntil(
+    performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, requestUrl)
+      .catch(e => console.error("Background analysis failed:", safeError(e)))
+  );
 
   return new Response('ACCEPTED', { status: 202 });
 }
