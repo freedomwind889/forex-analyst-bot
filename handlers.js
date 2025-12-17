@@ -695,7 +695,7 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
               retryReadable
             }, env);
 
-            await triggerInternalAnalyze(userId, request.url, env);
+            await triggerInternalAnalyze(userId, requestUrl, env);
             return;
           }
 
@@ -716,7 +716,7 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
 
           // continue to next queued job if any
           if (await hasQueuedJobs(userId, env)) {
-            await triggerInternalAnalyze(userId, request.url, env);
+            await triggerInternalAnalyze(userId, requestUrl, env);
           }
           return;
         }

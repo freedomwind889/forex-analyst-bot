@@ -134,7 +134,7 @@ OUTPUT: JSON ONLY with this exact structure:
     "trigger": { "candlestick_patterns": [], "divergence": "none/bullish/bearish", "indicator_snapshot": {} },
     "trade_setup": { "action": "BUY/SELL/WAIT/HOLD", "entry_zone": null, "target_price": null, "stop_loss": null, "confidence": "High/Medium/Low", "risk_flags": [] }
   },
-  "user_response_text": "THAI ONLY output in EXACT format:\n\n📢 **สถานะ: [ACTION] (Confidence)**\n⏱️ **TF:** [Detected]\n📚 **Confluence:** [TF list]\n\n🔍 **Top-Down:**\n1️⃣ **Structure:** [HTF bias + current structure + conflict]\n2️⃣ **Value:** [Key levels or 'No Man's Land']\n3️⃣ **Trigger:** [Patterns/Indicators]\n\n🎯 **Setup:**\n- **Entry:** [Zone]\n- **TP:** [Price]\n- **SL:** [Price]\n\n💡 **สรุป:** [Confluence strength + risks. Max 10-20 sentences]"
+  "user_response_text": "THAI ONLY output in EXACT format:\n\n📢 สถานะ: [ACTION] (Confidence)\n⏱️ TF: [Detected]\n📚 Confluence: [TF list]\n\n🔍 Top-Down:\n1️⃣ Structure: [HTF bias + current structure + conflict]\n2️⃣ Value: [Key levels or 'No Man's Land']\n3️⃣ Trigger: [Patterns/Indicators]\n\n🎯 Setup:\n- Entry: [Zone]\n- TP: [Price]\n- SL: [Price]\n\n💡 สรุป: [Confluence strength + risks. Max 10-20 sentences]"
 }`
     }]
   };
