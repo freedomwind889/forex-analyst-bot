@@ -2,7 +2,7 @@ import { normalizeTF, safeError, inferLikelyCurrentTF, arrayBufferToBase64, prom
 import { TF_VALIDITY_MS, TF_ORDER, CANCEL_TEXT, MAIN_MENU_TEXT } from './config.js';
 import { mainMenu, tradeStyleMenu } from './menus.js';
 import { replyText, getContentFromLine } from './line.js';
-import { analyzeChartStructured, chatWithGeminiText, analyzeTradeStyleWithGemini, reanalyzeFromDB, createFallbackAnalysis, selectRowsForTradeStyle } from './ai.js';
+import { analyzeChartStructured, chatWithGeminiText, analyzeTradeStyleWithGemini, reanalyzeFromDB, createFallbackAnalysis, selectRowsForTradeStyle, buildTradeStyleContext } from './ai.js';
 import { getAllAnalyses, saveAnalysis, deleteAnalysis, updateAnalysisTF } from './database.js';
 import { enqueueAnalysisJob, buildQueueAckMessage, claimNextQueuedJob, requeueJob, markJobDone, markJobError, hasQueuedJobs, getUserQueueStats } from './queue.js';
 
@@ -540,11 +540,14 @@ export async function handleInternalAnalyze(request, env, ctx) {
     return new Response('OK', { status: 200 });
   }
 
-  const internalTimeoutMs = Math.max(8000, Number(env.INTERNAL_AI_TIMEOUT_MS || 28000));
+  const internalTimeoutMs = Math.max(8000, Number(env.INTERNAL_AI_TIMEOUT_MS || 20000));
   const maxAttempts = Math.max(1, Number(env.INTERNAL_MAX_RETRY || 3));
   const attempt = Number(job.attempt || 0);
 
   const startedReadable = new Date(job.started_at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+
+  // Log timeout setting
+  console.log(`[Job ${job.job_id}] Starting analysis with timeout: ${internalTimeoutMs}ms (free-tier max: 30000ms)`);
 
   // Write job marker for visibility (single row per-user)
   try {
