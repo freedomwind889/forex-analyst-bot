@@ -583,7 +583,7 @@ export async function handleInternalAnalyze(request, env, ctx) {
 
   // ✅ Return immediately - do NOT use ctx.waitUntil() to wrap entire analysis
   // Instead: kick off background task via separate internal call
-  performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, requestUrl)
+  performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, request.url)
     .catch(e => console.error("Background analysis failed:", safeError(e)));
 
   return new Response('ACCEPTED', { status: 202 });
@@ -695,7 +695,7 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
               retryReadable
             }, env);
 
-            await triggerInternalAnalyze(userId, requestUrl, env);
+            await triggerInternalAnalyze(userId, request.url, env);
             return;
           }
 
@@ -716,7 +716,7 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
 
           // continue to next queued job if any
           if (await hasQueuedJobs(userId, env)) {
-            await triggerInternalAnalyze(userId, requestUrl, env);
+            await triggerInternalAnalyze(userId, request.url, env);
           }
           return;
         }
@@ -801,5 +801,4 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
         console.error("Failed to update _JOB marker (error):", safeError(e2));
       }
     }
-}
 }
