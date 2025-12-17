@@ -8,8 +8,8 @@ compatibility_date = "2024-01-01"
 # For D1 database
 [[d1_databases]]
 binding = "DB"
-database_name = "forex_analysis_db"
-database_id = ""  # Fill in your D1 database ID
+database_name = "forexanalyze"
+database_id = "9412eca8-24a4-4281-a518-63ecd08bcc8a"  # Fill in your D1 database ID
 
 # For secrets, use wrangler secret put
 # LINE_CHANNEL_SECRET
