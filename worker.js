@@ -12,6 +12,8 @@ export default {
     const url = new URL(request.url);
     const isInternal = (url.pathname === '/internal/analyze') || (url.searchParams.get('__internal') === 'analyze');
     if (isInternal) {
+      // Initialize database for internal handler as well
+      await initDatabase(env);
       return await handleInternalAnalyze(request, env, ctx);
     }
 

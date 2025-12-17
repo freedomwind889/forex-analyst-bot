@@ -583,7 +583,8 @@ export async function handleInternalAnalyze(request, env, ctx) {
 
   // ✅ Return immediately - do NOT use ctx.waitUntil() to wrap entire analysis
   // Instead: kick off background task via separate internal call
-  performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, request.url)
+  const requestUrl = request.url;
+  performAnalysisInBackground(userId, job, internalTimeoutMs, maxAttempts, env, requestUrl)
     .catch(e => console.error("Background analysis failed:", safeError(e)));
 
   return new Response('ACCEPTED', { status: 202 });
@@ -594,12 +595,39 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
   const attempt = Number(job.attempt || 0);
 
   try {
-    const { arrayBuffer: imageBinary, contentType } = await getContentFromLine(job.message_id, env);
+    // Fetch image from LINE - with fallback to cached version if fetch fails
+    let imageBinary, contentType;
+    try {
+      const result = await getContentFromLine(job.message_id, env);
+      imageBinary = result.arrayBuffer;
+      contentType = result.contentType;
+    } catch (lineErr) {
+      console.warn(`[Job ${job.job_id}] Failed to fetch from LINE API:`, safeError(lineErr));
+      // Try to recover from KV cache
+      const cachedImg = await getImageFromKV(env.ANALYSIS_KV, userId, job.job_id);
+      if (cachedImg && cachedImg.base64) {
+        console.log(`[Job ${job.job_id}] Recovered from cached image in KV`);
+        // Convert base64 back to binary
+        const binaryString = atob(cachedImg.base64);
+        imageBinary = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          imageBinary[i] = binaryString.charCodeAt(i);
+        }
+        contentType = cachedImg.contentType || 'image/jpeg';
+      } else {
+        throw new Error(`Cannot fetch image from LINE and no cached version available: ${lineErr.message}`);
+      }
+    }
+    
     const base64Image = arrayBufferToBase64(imageBinary);
 
     // Cache image in KV for timeout recovery & retry capability
     try {
-      await saveImageToKV(env.ANALYSIS_KV, userId, job.job_id, base64Image, contentType, 0);
+      if (env.ANALYSIS_KV) {
+        await saveImageToKV(env.ANALYSIS_KV, userId, job.job_id, base64Image, contentType, 0);
+      } else {
+        console.warn(`[Job ${job.job_id}] ANALYSIS_KV not configured, skipping cache`);
+      }
     } catch (kvErr) {
       console.warn(`[Job ${job.job_id}] Failed to cache image to KV:`, safeError(kvErr));
     }
@@ -608,6 +636,8 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
     const controller = new AbortController();
 
     let analysisResult;
+    let shouldContinueToStorage = true; // Flag to determine if we should proceed to storage
+    
     try {
       analysisResult = await promiseWithTimeout(
         analyzeChartStructured(userId, base64Image, existingRows, env, { mimeType: contentType, signal: controller.signal }),
@@ -621,6 +651,9 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
         // For TIMEOUT: Try to recover by analyzing from cached KV image + retry one more time
         if (isTimeout) {
           console.warn('AI analysis timeout, attempting recovery from KV cache:', msg);
+          // Abort original controller to free resources immediately
+          try { controller.abort(); } catch (_) {}
+          
           const attempt_recovery = Number(job.attempt || 0) + 1;
           const maxRecoveryAttempts = 2;
           
@@ -644,7 +677,7 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
                   // Recovery also failed, fall back to previous analysis
                   console.warn('[Timeout Recovery] Recovery attempt also timed out, using cached analysis');
                   const recentAnalysis = existingRows?.[0];
-                  const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+                  const recentContext = recentAnalysis ? JSON.parse(recentAnalysis.analysis_json || '{}') : null;
                   analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
                   analysisResult._analysis_timeout = true;
                   analysisResult._recovery_failed = true;
@@ -655,14 +688,14 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
                 // No KV cache available, use immediate fallback
                 console.warn('[Timeout Recovery] No cached image in KV, using fallback analysis');
                 const recentAnalysis = existingRows?.[0];
-                const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+                const recentContext = recentAnalysis?.analysis_json ? JSON.parse(recentAnalysis.analysis_json || '{}') : null;
                 analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
                 analysisResult._analysis_timeout = true;
               }
             } catch (kvErr) {
               console.error('[Timeout Recovery] KV fetch failed:', safeError(kvErr));
               const recentAnalysis = existingRows?.[0];
-              const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+              const recentContext = recentAnalysis?.analysis_json ? JSON.parse(recentAnalysis.analysis_json || '{}') : null;
               analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
               analysisResult._analysis_timeout = true;
             }
@@ -670,16 +703,19 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
             // Exceeded max recovery attempts, give up and use fallback
             console.log('[Timeout Recovery] Max recovery attempts exceeded, using fallback');
             const recentAnalysis = existingRows?.[0];
-            const recentContext = recentAnalysis?.analysis_data ? safeParseJsonLoosely(recentAnalysis.analysis_data) : null;
+            const recentContext = recentAnalysis?.analysis_json ? JSON.parse(recentAnalysis.analysis_json || '{}') : null;
             analysisResult = createFallbackAnalysis(userId, 'Unknown', recentContext);
             analysisResult._analysis_timeout = true;
           }
         } else {
-          // For other errors: retry if retryable
+          // For other errors: abort controller and retry if retryable
+          try { controller.abort(); } catch (_) {}
+          
           const retryable = msg.includes('429') || msg.includes('503') || msg.includes('500');
           const nextAttempt = attempt + 1;
           
           if (retryable && nextAttempt <= maxAttempts) {
+            console.log(`[Job ${job.job_id}] Retryable error (attempt ${nextAttempt}/${maxAttempts}): ${msg}`);
             await requeueJob(job.job_id, env, nextAttempt, msg);
 
             const retryAt = Date.now();
@@ -696,33 +732,39 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
             }, env);
 
             await triggerInternalAnalyze(userId, requestUrl, env);
-            return;
-          }
+            shouldContinueToStorage = false;
+          } else {
+            // non-retryable / exceeded attempts
+            console.log(`[Job ${job.job_id}] Non-retryable error or max attempts exceeded: ${msg}`);
+            await markJobError(job.job_id, env, msg);
+            const errAt = Date.now();
+            const errReadable = new Date(errAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+            await saveAnalysis(userId, '_JOB', errAt, errReadable, {
+              status: 'error',
+              jobId: job.job_id,
+              messageId: job.message_id,
+              attempt: nextAttempt,
+              maxAttempts,
+              error: msg,
+              errAt,
+              errReadable
+            }, env);
 
-          // non-retryable / exceeded attempts
-          await markJobError(job.job_id, env, msg);
-          const errAt = Date.now();
-          const errReadable = new Date(errAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
-          await saveAnalysis(userId, '_JOB', errAt, errReadable, {
-            status: 'error',
-            jobId: job.job_id,
-            messageId: job.message_id,
-            attempt: nextAttempt,
-            maxAttempts,
-            error: msg,
-            errAt,
-            errReadable
-          }, env);
-
-          // continue to next queued job if any
-          if (await hasQueuedJobs(userId, env)) {
-            await triggerInternalAnalyze(userId, requestUrl, env);
+            // continue to next queued job if any
+            if (await hasQueuedJobs(userId, env)) {
+              await triggerInternalAnalyze(userId, requestUrl, env);
+            }
+            shouldContinueToStorage = false;
           }
-          return;
         }
-      } finally {
+    } finally {
         try { controller.abort(); } catch (_) {}
-      }
+    }
+
+    // Only proceed to storage if we have a valid analysis result
+    if (!shouldContinueToStorage || !analysisResult) {
+      return;
+    }
 
       // Normalize + store rich analysis (same as foreground path)
       const detectedTF = normalizeTF(analysisResult?.detected_tf || "Unknown_TF");
@@ -756,7 +798,10 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
       }
 
       await saveAnalysis(userId, detectedTF, Date.now(), readableTime, toStore, env);
+      console.log(`[Job ${job.job_id}] Analysis saved for TF: ${detectedTF}`);
+      
       await markJobDone(job.job_id, env, detectedTF);
+      console.log(`[Job ${job.job_id}] Job marked as done`);
 
       // Update _JOB summary
       const doneAt = Date.now();
@@ -774,6 +819,7 @@ async function performAnalysisInBackground(userId, job, internalTimeoutMs, maxAt
 
       // Clean up cached image and state from KV (analysis is complete)
       await cleanupAnalysisFromKV(env.ANALYSIS_KV, userId, job.job_id);
+      console.log(`[Job ${job.job_id}] Cleaned up KV cache and state`);
 
       // If more jobs queued, continue chain
       if (stats.queued_count > 0) {
